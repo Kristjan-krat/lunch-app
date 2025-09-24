@@ -2,53 +2,55 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeCanvas } from "qrcode.react";
 
-// ---- Supabase config ----
+/* ------------------ Supabase config ------------------ */
 const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL ||
   (typeof window !== "undefined" ? window.SUPABASE_URL : "") ||
   "https://YOUR-PROJECT.supabase.co";
+
 const SUPABASE_ANON_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   (typeof window !== "undefined" ? window.SUPABASE_ANON_KEY : "") ||
   "YOUR-PUBLISHABLE-KEY";
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: true } });
 
-const todayKey = () => {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-};
-// === Week helpers (ADD this under your Supabase client code) ===
-function startOfWeek(d) {
-  const x = new Date(d);
-  // Monday as first day of week (Mon=1 ... Sun=7)
-  const day = x.getDay() || 7;
-  if (day !== 1) x.setDate(x.getDate() - (day - 1));
-  x.setHours(0,0,0,0);
-  return x;
-}
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: true },
+});
+
+/* ------------------ Helpers: dates & week ------------------ */
 function ymd(d) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
+function startOfWeek(d) {
+  const x = new Date(d);
+  // Monday as first day (Mon=1..Sun=7)
+  const day = x.getDay() || 7;
+  if (day !== 1) x.setDate(x.getDate() - (day - 1));
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
 function getThisWeek() {
   const first = startOfWeek(new Date());
   return Array.from({ length: 5 }).map((_, i) => {
     const d = new Date(first);
-    d.setDate(first.getDate() + i); // Mon..Fri
-    const key = ymd(d);
-    const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    return { key, label, date: d };
+    d.setDate(first.getDate() + i);
+    return {
+      key: ymd(d),
+      label: d.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      }),
+      date: d,
+    };
   });
 }
 
+/* ------------------ Constants ------------------ */
 const LOCATIONS = ["Gagnaver", "Verkstæði"];
-
-// --- i18n ---
 const LANGS = [
   { code: "en", label: "English" },
   { code: "is", label: "Íslenska" },
@@ -168,22 +170,28 @@ const T = {
 };
 
 export default function App() {
-  // --- State ---
-  // language first (ok wherever)
+  /* ------------------ State (order matters) ------------------ */
+  // language
   const [lang, setLang] = useState(() => localStorage.getItem("lang") || "en");
   const t = T[lang];
+  useEffect(() => {
+    localStorage.setItem("lang", lang);
+    const url = new URL(window.location);
+    url.searchParams.set("lang", lang);
+    window.history.replaceState({}, "", url);
+  }, [lang]);
 
-  // WEEK STATE — must come before dateKey
+  // week first
   const [week, setWeek] = useState(getThisWeek());
   const [activeDay, setActiveDay] = useState(0); // 0 = Monday
 
-  // DATE KEY that depends on week/activeDay
+  // dateKey depends on week/activeDay
   const [dateKey, setDateKey] = useState(week[activeDay].key);
   useEffect(() => {
     setDateKey(week[activeDay].key);
   }, [activeDay, week]);
 
-  // the rest of your states...
+  // rest
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -199,52 +207,79 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-
-
-
-  // Admin editor rows
-  useEffect(() => { localStorage.setItem("lang", lang); }, [lang]);
-
-  // Auth
+  /* ------------------ Auth ------------------ */
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) =>
+      setSession(s)
+    );
     return () => sub.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
     (async () => {
-      if (!session?.user) { setIsAdmin(false); return; }
-      const { data } = await supabase.from("admins").select("user_id").eq("user_id", session.user.id).maybeSingle();
+      if (!session?.user) {
+        setIsAdmin(false);
+        return;
+      }
+      const { data } = await supabase
+        .from("admins")
+        .select("user_id")
+        .eq("user_id", session.user.id)
+        .maybeSingle();
       setIsAdmin(!!data);
     })();
   }, [session]);
 
+  /* ------------------ Data load ------------------ */
   async function loadData(dk) {
     const { data: menuItems } = await supabase
-      .from("menu_items").select("id, day, name, description, price").eq("day", dk).order("name");
+      .from("menu_items")
+      .select("id, day, name, description, price")
+      .eq("day", dk)
+      .order("name");
     setMenu(menuItems || []);
+
     const { data: orderRows } = await supabase
-      .from("orders").select("id, day, user_id, employee_name, item_id, note, location, created_at").eq("day", dk).order("created_at");
+      .from("orders")
+      .select(
+        "id, day, user_id, employee_name, item_id, note, location, created_at"
+      )
+      .eq("day", dk)
+      .order("created_at");
     setOrders(orderRows || []);
   }
-  useEffect(() => { loadData(dateKey); }, [dateKey]);
+  useEffect(() => {
+    loadData(dateKey);
+  }, [dateKey]);
 
+  // realtime
   useEffect(() => {
     const channel = supabase
       .channel(`orders-menu-${dateKey}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `day=eq.${dateKey}` }, () => loadData(dateKey))
-      .on("postgres_changes", { event: "*", schema: "public", table: "menu_items", filter: `day=eq.${dateKey}` }, () => loadData(dateKey))
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders", filter: `day=eq.${dateKey}` },
+        () => loadData(dateKey)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "menu_items", filter: `day=eq.${dateKey}` },
+        () => loadData(dateKey)
+      )
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [dateKey]);
 
+  /* ------------------ Derived ------------------ */
   const totalsByLocation = useMemo(() => {
     const result = new Map();
     LOCATIONS.forEach((loc) => {
       const map = new Map();
       menu.forEach((m) => map.set(m.id, 0));
-      orders.filter((o) => o.location === loc).forEach((o) => map.set(o.item_id, (map.get(o.item_id) || 0) + 1));
+      orders
+        .filter((o) => o.location === loc)
+        .forEach((o) => map.set(o.item_id, (map.get(o.item_id) || 0) + 1));
       result.set(loc, map);
     });
     return result;
@@ -254,93 +289,159 @@ export default function App() {
     if (!deadlineEnabled) return false;
     const now = new Date();
     const [hh, mm] = deadline.split(":").map((n) => parseInt(n, 10));
-    const d = new Date(now); d.setHours(hh, mm, 0, 0);
+    const d = new Date(now);
+    d.setHours(hh, mm, 0, 0);
     return now.getTime() > d.getTime();
   }, [deadlineEnabled, deadline]);
 
-  // Actions
- async function signIn() {
-  if (!email) return alert("Enter your work email");
-  const redirectTo = `${window.location.origin}/`; // e.g. https://lunch-app-seven.vercel.app/
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: redirectTo },
-  });
-  if (error) alert(error.message);
-  else alert("Check your email for the magic link");
-}
+  /* ------------------ Week helpers for UI ------------------ */
+  function setWeekFrom(first) {
+    const w = Array.from({ length: 5 }).map((_, i) => {
+      const d = new Date(first);
+      d.setDate(first.getDate() + i);
+      return {
+        key: ymd(d),
+        label: d.toLocaleDateString(undefined, {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }),
+        date: d,
+      };
+    });
+    setWeek(w);
+    setActiveDay(0);
+  }
+  function prevWeek() {
+    const first = new Date(week[0].date);
+    first.setDate(first.getDate() - 7);
+    setWeekFrom(first);
+  }
+  function nextWeek() {
+    const first = new Date(week[0].date);
+    first.setDate(first.getDate() + 7);
+    setWeekFrom(first);
+  }
 
-  async function signOut() { await supabase.auth.signOut(); }
+  /* ------------------ Actions ------------------ */
+  async function signIn() {
+    if (!email) return setToast({ type: "err", text: "Enter your work email" });
+    const redirectTo = `${window.location.origin}/`;
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectTo },
+    });
+    if (error) setToast({ type: "err", text: error.message });
+    else setToast({ type: "ok", text: "Check your email for the magic link" });
+  }
+  async function signOut() {
+    await supabase.auth.signOut();
+  }
 
-async function submitOrder() {
-  if (!selected) return setToast({ type: "err", text: "Select a lunch item first." });
-  if (deadlinePassed) return setToast({ type: "err", text: t.orderingClosed });
-  if (submitting) return;
-  setSubmitting(true);
+  async function submitOrder() {
+    if (!selected)
+      return setToast({ type: "err", text: "Select a lunch item first." });
+    if (deadlinePassed)
+      return setToast({ type: "err", text: t.orderingClosed });
+    if (submitting) return;
+    setSubmitting(true);
 
-  const payload = {
-    day: dateKey,
-    item_id: selected,
-    note: note.trim() || null,
-    user_id: null,
-    employee_name: null,
-    location,
-  };
-  if (session?.user) {
-    payload.user_id = session.user.id;
-  } else {
-    if (!name.trim()) {
-      setSubmitting(false);
-      return setToast({ type: "err", text: t.yourName });
+    const payload = {
+      day: dateKey,
+      item_id: selected,
+      note: note.trim() || null,
+      user_id: null,
+      employee_name: null,
+      location,
+    };
+
+    if (session?.user) {
+      payload.user_id = session.user.id;
+    } else {
+      if (!name.trim()) {
+        setSubmitting(false);
+        return setToast({ type: "err", text: t.yourName });
+      }
+      payload.employee_name = name.trim();
     }
-    payload.employee_name = name.trim();
+
+    const { error } = await supabase.from("orders").insert(payload);
+    setSubmitting(false);
+
+    if (error) {
+      const msg =
+        error.code === "23505"
+          ? "You already placed an order for this day."
+          : error.message;
+      return setToast({ type: "err", text: msg });
+    }
+
+    setNote("");
+    setSelected(null);
+    setToast({
+      type: "ok",
+      text: `Order placed for ${
+        week.find((w) => w.key === dateKey)?.label || dateKey
+      }.`,
+    });
   }
 
-  const { error } = await supabase.from("orders").insert(payload);
-  setSubmitting(false);
-
-  if (error) {
-    const msg = error.code === "23505"
-      ? "You already placed an order for this day."
-      : error.message;
-    return setToast({ type: "err", text: msg });
+  async function deleteOrder(id) {
+    const { error } = await supabase.from("orders").delete().eq("id", id);
+    if (error) setToast({ type: "err", text: error.message });
   }
 
-  setNote("");
-  setSelected(null);
-  setToast({ type: "ok", text: `Order placed for ${week.find(w=>w.key===dateKey)?.label || dateKey}.` });
-}
-
-
-  async function deleteOrder(id) { const { error } = await supabase.from("orders").delete().eq("id", id); if (error) alert(error.message); }
-
-  function addRow() { setRows((r) => [...r, { name: "", description: "", price: "" }]); }
-  function updateRow(i, key, val) { setRows((r) => r.map((row, idx) => idx === i ? { ...row, [key]: val } : row)); }
-  function removeRow(i) { setRows((r) => r.filter((_, idx) => idx !== i)); }
+  function addRow() {
+    setRows((r) => [...r, { name: "", description: "", price: "" }]);
+  }
+  function updateRow(i, key, val) {
+    setRows((r) => r.map((row, idx) => (idx === i ? { ...row, [key]: val } : row)));
+  }
+  function removeRow(i) {
+    setRows((r) => r.filter((_, idx) => idx !== i));
+  }
 
   async function publishMenu() {
-    if (!isAdmin) return alert("Admins only");
+    if (!isAdmin) return setToast({ type: "err", text: "Admins only" });
     const items = rows
-      .map((r) => ({ day: dateKey, name: r.name?.trim(), description: r.description?.trim() || null, price: r.price?.trim() || null }))
+      .map((r) => ({
+        day: dateKey,
+        name: r.name?.trim(),
+        description: r.description?.trim() || null,
+        price: r.price?.trim() || null,
+      }))
       .filter((r) => r.name);
-    if (items.length === 0) return alert("Add at least one item");
+    if (items.length === 0)
+      return setToast({ type: "err", text: "Add at least one item" });
     const { error } = await supabase.from("menu_items").insert(items);
-    if (error) alert(error.message); else setRows([{ name: "", description: "", price: "" }]);
+    if (error) setToast({ type: "err", text: error.message });
+    else {
+      setRows([{ name: "", description: "", price: "" }]);
+      setToast({ type: "ok", text: "Menu published" });
+    }
   }
 
   async function clearToday() {
-    if (!isAdmin) return alert("Admins only");
+    if (!isAdmin) return setToast({ type: "err", text: "Admins only" });
     if (!confirm("Clear today's menu and orders?")) return;
     await supabase.from("orders").delete().eq("day", dateKey);
     await supabase.from("menu_items").delete().eq("day", dateKey);
     await loadData(dateKey);
+    setToast({ type: "ok", text: "Cleared" });
   }
 
   function exportOrdersCSV() {
     const rows = [["Date", "Location", "Employee", "Item", "Note", "Time"]];
     orders.forEach((o) => {
       const item = menu.find((m) => m.id === o.item_id);
-      rows.push([dateKey, o.location || "", o.employee_name || o.user_id || "", item ? item.name : o.item_id, o.note || "", new Date(o.created_at).toLocaleTimeString()]);
+      rows.push([
+        dateKey,
+        o.location || "",
+        o.employee_name || o.user_id || "",
+        item ? item.name : o.item_id,
+        o.note || "",
+        new Date(o.created_at).toLocaleTimeString(),
+      ]);
     });
     downloadCSV(`lunch-orders-${dateKey}.csv`, rows);
   }
@@ -352,97 +453,122 @@ async function submitOrder() {
     });
     downloadCSV(`lunch-totals-${dateKey}.csv`, rows);
   }
-function downloadCSV(filename, rows) {
-  const process = (v) => {
-    const s = String(v ?? "").replaceAll('"', '""');
-    return /[",\n]/.test(s) ? `"${s}"` : s;
-  };
-
-  const csv = rows.map(r => r.map(process).join(",")).join("\n");
-
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
+  function downloadCSV(filename, rows) {
+    const process = (v) => {
+      const s = String(v ?? "").replaceAll('"', '""');
+      return /[",\n]/.test(s) ? `"${s}"` : s;
+    };
+    const csv = rows.map((r) => r.map(process).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const shareUrl = typeof window !== "undefined" ? window.location.href : "";
 
-  // --- UI ---
+  /* ------------------ UI ------------------ */
   return (
     <div className="wrap">
       <header className="row header">
-        <h1>🥗 {t.title} <small>({dateKey})</small></h1>
-        {/* Week tabs (ADD under the title) */}
-<div className="row wrap gap" style={{ marginTop: 6 }}>
-  {week.map((d, i) => (
-    <button
-      key={d.key}
-      className={`btn ${i === activeDay ? "primary" : ""}`}
-      onClick={() => setActiveDay(i)}
-      title={d.key}
-    >
-      {d.label}
-    </button>
-  ))}
-  {/* Optional: next/prev week buttons */}
-  <button className="btn" onClick={() => {
-    const first = new Date(week[0].date);
-    first.setDate(first.getDate() - 7);
-    const w = Array.from({length:5}).map((_,i)=>{ const d=new Date(first); d.setDate(first.getDate()+i); return { key: ymd(d), label: d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}), date:d }; });
-    setWeek(w); setActiveDay(0);
-  }}>⟵</button>
-  <button className="btn" onClick={() => {
-    const first = new Date(week[0].date);
-    first.setDate(first.getDate() + 7);
-    const w = Array.from({length:5}).map((_,i)=>{ const d=new Date(first); d.setDate(first.getDate()+i); return { key: ymd(d), label: d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}), date:d }; });
-    setWeek(w); setActiveDay(0);
-  }}>⟶</button>
-</div>
-       
+        <div className="row" style={{ alignItems: "center", gap: 12 }}>
+          <img src="/logo.svg" alt="Company logo" style={{ width: 36, height: 36 }} />
+          <h1>
+            🥗 {t.title} <small>({dateKey})</small>
+          </h1>
+        </div>
+
         <div className="row gap">
-          <select className="input" value={lang} onChange={(e)=>setLang(e.target.value)}>
-            {LANGS.map((l)=> <option key={l.code} value={l.code}>{l.label}</option>)}
+          <select
+            className="input"
+            value={lang}
+            onChange={(e) => setLang(e.target.value)}
+          >
+            {LANGS.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.label}
+              </option>
+            ))}
           </select>
           {session ? (
             <>
               <span className="pill">{session.user.email}</span>
-              <button className="btn" onClick={signOut}>{t.signout}</button>
+              <button className="btn" onClick={signOut}>
+                {t.signout}
+              </button>
             </>
           ) : (
             <>
-              <input className="input" placeholder={t.yourEmail} value={email} onChange={(e)=>setEmail(e.target.value)} />
-              <button className="btn" onClick={signIn}>{t.magic}</button>
+              <input
+                className="input"
+                placeholder={t.yourEmail}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <button className="btn" onClick={signIn}>
+                {t.magic}
+              </button>
             </>
           )}
         </div>
       </header>
 
       <main className="grid">
+        {/* Order form */}
         <section className="card">
           <h2>{t.placeOrder}</h2>
+
           <div className="row wrap gap">
             {!session && (
-              <input className="input" placeholder={t.yourName} value={name} onChange={(e)=>setName(e.target.value)} />
+              <input
+                className="input"
+                placeholder={t.yourName}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
             )}
+
             <label className="row gap center">
-              <input type="checkbox" checked={deadlineEnabled} onChange={(e)=>setDeadlineEnabled(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={deadlineEnabled}
+                onChange={(e) => setDeadlineEnabled(e.target.checked)}
+              />
               {t.deadline}
             </label>
-            <input type="time" className="input" value={deadline} onChange={(e)=>setDeadline(e.target.value)} disabled={!deadlineEnabled} style={{width:120}} />
+
+            <input
+              type="time"
+              className="input"
+              value={deadline}
+              onChange={(e) => setDeadline(e.target.value)}
+              disabled={!deadlineEnabled}
+              style={{ width: 120 }}
+            />
+
             <div className="row gap center">
               <span>{t.deliverTo}</span>
-              <select className="input" value={location} onChange={(e)=>setLocation(e.target.value)} style={{width:160}}>
-                {LOCATIONS.map((loc)=> <option key={loc} value={loc}>{loc}</option>)}
+              <select
+                className="input"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                style={{ width: 160 }}
+              >
+                {LOCATIONS.map((loc) => (
+                  <option key={loc} value={loc}>
+                    {loc}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
 
-          {deadlineEnabled && deadlinePassed && <div className="warn">{t.orderingClosed}</div>}
+          {deadlineEnabled && deadlinePassed && (
+            <div className="warn">{t.orderingClosed}</div>
+          )}
 
           <div className="menu-grid">
             <div className="label">{t.todaysMenu}</div>
@@ -450,10 +576,17 @@ function downloadCSV(filename, rows) {
               <div className="muted">{t.noItems}</div>
             ) : (
               <div className="cards">
-                {menu.map((m)=> (
-                  <button key={m.id} onClick={()=>setSelected(m.id)} disabled={deadlineEnabled && deadlinePassed} className={`tile ${selected === m.id ? "active": ""}`}>
+                {menu.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setSelected(m.id)}
+                    disabled={deadlineEnabled && deadlinePassed}
+                    className={`tile ${selected === m.id ? "active" : ""}`}
+                  >
                     <div className="tile-title">{m.name}</div>
-                    {m.description && <div className="tile-sub">{m.description}</div>}
+                    {m.description && (
+                      <div className="tile-sub">{m.description}</div>
+                    )}
                     {m.price && <div className="tile-meta">{m.price}</div>}
                   </button>
                 ))}
@@ -461,8 +594,20 @@ function downloadCSV(filename, rows) {
             )}
           </div>
 
-          <input className="input" placeholder={t.notePlaceholder} value={note} onChange={(e)=>setNote(e.target.value)} />
-            <div className="row">
+          {selected && (
+            <div className="pill soft" style={{ margin: "8px 0" }}>
+              Selected: {menu.find((m) => m.id === selected)?.name}
+            </div>
+          )}
+
+          <input
+            className="input"
+            placeholder={t.notePlaceholder}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+
+          <div className="row">
             <button
               className="btn primary"
               onClick={submitOrder}
@@ -470,27 +615,47 @@ function downloadCSV(filename, rows) {
             >
               {submitting ? "Submitting..." : t.submitOrder}
             </button>
+          </div>
 
-          {/* Toast (ADD near the bottom of the return) */}
-{toast && (
-  <div className={`toast ${toast.type === "ok" ? "ok" : "err"}`}
-       onAnimationEnd={() => setToast(null)}>
-    {toast.text}
-  </div>
-)}
-</div>
+          {/* Week tabs UNDER the submit button */}
+          <div className="weekbar row wrap gap" style={{ marginTop: 12 }}>
+            {week.map((d, i) => (
+              <button
+                key={d.key}
+                className={`btn ${i === activeDay ? "primary" : ""}`}
+                onClick={() => setActiveDay(i)}
+                title={d.key}
+              >
+                {d.label}
+              </button>
+            ))}
+            <button className="btn" onClick={prevWeek}>
+              ⟵
+            </button>
+            <button className="btn" onClick={nextWeek}>
+              ⟶
+            </button>
+          </div>
         </section>
 
+        {/* Right column */}
         <aside className="col">
-          {LOCATIONS.map((loc)=> (
+          {LOCATIONS.map((loc) => (
             <section key={loc} className="card">
-              <h3>{t.totals} — {loc}</h3>
+              <h3>
+                {t.totals} — {loc}
+              </h3>
               {menu.length === 0 ? (
                 <div className="muted">{t.noItems}</div>
               ) : (
                 <ul className="list">
-                  {menu.map((m)=> (
-                    <li key={m.id}><span>{m.name}</span><b>{(totalsByLocation.get(loc) || new Map()).get(m.id) || 0}</b></li>
+                  {menu.map((m) => (
+                    <li key={m.id}>
+                      <span>{m.name}</span>
+                      <b>
+                        {(totalsByLocation.get(loc) || new Map()).get(m.id) || 0}
+                      </b>
+                    </li>
                   ))}
                 </ul>
               )}
@@ -499,12 +664,16 @@ function downloadCSV(filename, rows) {
 
           <section className="card">
             <div className="row gap wrap">
-              <button className="btn" onClick={exportOrdersCSV}>{t.exportOrders}</button>
-              <button className="btn" onClick={exportTotalsCSV}>{t.exportTotals}</button>
+              <button className="btn" onClick={exportOrdersCSV}>
+                {t.exportOrders}
+              </button>
+              <button className="btn" onClick={exportTotalsCSV}>
+                {t.exportTotals}
+              </button>
             </div>
           </section>
 
-          <section className="card center">
+          <section className="card center qr">
             <h3>{t.shareLink}</h3>
             <QRCodeCanvas value={shareUrl} size={160} includeMargin />
             <div className="muted small">{shareUrl}</div>
@@ -514,46 +683,90 @@ function downloadCSV(filename, rows) {
             <section className="card">
               <h3>{t.adminPanel}</h3>
               <label>{t.date}</label>
-              <input type="date" className="input" value={dateKey} onChange={(e)=>setDateKey(e.target.value)} />
+              <input type="date" className="input" value={dateKey} readOnly />
+              <div className="muted small">
+                Use the week tabs (below submit) to change day
+              </div>
 
-              <div className="label" style={{marginTop:8}}>{t.pasteMenu}</div>
+              <div className="label" style={{ marginTop: 8 }}>
+                {t.pasteMenu}
+              </div>
               <div className="table">
                 <div className="thead">
-                  <div>Name</div><div>Description</div><div>Price</div><div></div>
+                  <div>Name</div>
+                  <div>Description</div>
+                  <div>Price</div>
+                  <div></div>
                 </div>
                 {rows.map((r, i) => (
                   <div key={i} className="trow">
-                    <input className="input" value={r.name} onChange={(e)=>updateRow(i,'name',e.target.value)} placeholder="Beef" />
-                    <input className="input" value={r.description} onChange={(e)=>updateRow(i,'description',e.target.value)} placeholder="sauce, rice" />
-                    <input className="input" value={r.price} onChange={(e)=>updateRow(i,'price',e.target.value)} placeholder="1890 kr" />
-                    <button className="btn" onClick={()=>removeRow(i)}>✕</button>
+                    <input
+                      className="input"
+                      value={r.name}
+                      onChange={(e) => updateRow(i, "name", e.target.value)}
+                      placeholder="Beef"
+                    />
+                    <input
+                      className="input"
+                      value={r.description}
+                      onChange={(e) =>
+                        updateRow(i, "description", e.target.value)
+                      }
+                      placeholder="sauce, rice"
+                    />
+                    <input
+                      className="input"
+                      value={r.price}
+                      onChange={(e) => updateRow(i, "price", e.target.value)}
+                      placeholder="1890 kr"
+                    />
+                    <button className="btn" onClick={() => removeRow(i)}>
+                      ✕
+                    </button>
                   </div>
                 ))}
-                <div className="row gap" style={{marginTop:8}}>
-                  <button className="btn" onClick={addRow}>+ Add row</button>
-                  <button className="btn primary" onClick={publishMenu}>{t.publishMenu}</button>
-                  <button className="btn danger" onClick={clearToday}>{t.clearToday}</button>
+                <div className="row gap" style={{ marginTop: 8 }}>
+                  <button className="btn" onClick={addRow}>
+                    + Add row
+                  </button>
+                  <button className="btn primary" onClick={publishMenu}>
+                    {t.publishMenu}
+                  </button>
+                  <button className="btn danger" onClick={clearToday}>
+                    {t.clearToday}
+                  </button>
                 </div>
               </div>
 
-              <div style={{marginTop:12}}>
+              <div style={{ marginTop: 12 }}>
                 <div className="label">{t.manageOrders}</div>
                 {orders.length === 0 ? (
                   <div className="muted">{t.noOrders}</div>
                 ) : (
                   <div className="stack">
-                    {orders.map((o)=>{
-                      const item = menu.find((m)=>m.id===o.item_id);
+                    {orders.map((o) => {
+                      const item = menu.find((m) => m.id === o.item_id);
                       return (
                         <div key={o.id} className="row space card-lite">
                           <div className="row gap wrap">
-                            <span className="pill">{new Date(o.created_at).toLocaleTimeString()}</span>
-                            <b>{o.employee_name || (o.user_id ? o.user_id.slice(0,8) : "")}</b>
-                            <span className="muted">→ {item ? item.name : o.item_id}</span>
-                            {o.note && <span className="muted italic">“{o.note}”</span>}
+                            <span className="pill">
+                              {new Date(o.created_at).toLocaleTimeString()}
+                            </span>
+                            <b>
+                              {o.employee_name ||
+                                (o.user_id ? o.user_id.slice(0, 8) : "")}
+                            </b>
+                            <span className="muted">
+                              → {item ? item.name : o.item_id}
+                            </span>
+                            {o.note && (
+                              <span className="muted italic">“{o.note}”</span>
+                            )}
                             <span className="pill soft">{o.location}</span>
                           </div>
-                          <button className="btn" onClick={()=>deleteOrder(o.id)}>Delete</button>
+                          <button className="btn" onClick={() => deleteOrder(o.id)}>
+                            Delete
+                          </button>
                         </div>
                       );
                     })}
@@ -565,14 +778,25 @@ function downloadCSV(filename, rows) {
         </aside>
       </main>
 
-      <footer className="center muted small" style={{marginTop:24}}>
-        Connected to Supabase. Set <code>VITE_SUPABASE_URL</code> & <code>VITE_SUPABASE_ANON_KEY</code> in <code>.env</code>.
+      <footer className="center muted small" style={{ marginTop: 24 }}>
+        Connected to Supabase. Set <code>VITE_SUPABASE_URL</code> &{" "}
+        <code>VITE_SUPABASE_ANON_KEY</code> in <code>.env</code>.
       </footer>
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`toast ${toast.type === "ok" ? "ok" : "err"}`}
+          onAnimationEnd={() => setToast(null)}
+        >
+          {toast.text}
+        </div>
+      )}
     </div>
   );
 }
 
-/* ---- minimal styles ---- */
+/* ------------------ Minimal styles (desktop + mobile) ------------------ */
 const style = document.createElement("style");
 style.innerHTML = `
   :root { --b:#e5e7eb; --m:#6b7280; --bg:#f8fafc; --pri:#2563eb; --pri-100:#eff6ff; --danger:#b91c1c; }
@@ -610,59 +834,54 @@ style.innerHTML = `
   .tile-meta { font-size:12px; color:var(--m); margin-top:6px; }
   .list { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
   .list li { display:flex; justify-content: space-between; padding:6px 8px; border:1px solid var(--b); border-radius:8px; background:#fff; }
-  .table { display:block; }
-  .thead { display:grid; grid-template-columns: 1fr 2fr 120px 60px; gap:8px; font-weight:600; margin-bottom:6px; }
-  .trow { display:grid; grid-template-columns: 1fr 2fr 120px 60px; gap:8px; margin-bottom:6px; align-items:center; }
+
   /* Toast */
-.toast {
-  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
-  padding: 10px 14px; border-radius: 10px; color: #111827; background: #fff;
-  border: 1px solid var(--b); box-shadow: 0 8px 30px rgba(0,0,0,.08);
-  animation: fadeout 3s forwards;
-}
-.toast.ok { border-color: #16a34a; }
-.toast.err { border-color: var(--danger); color: #b91c1c; }
-@keyframes fadeout { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
-/* ===== Mobile tweaks ===== */
-@media (max-width: 768px) {
-  .wrap { padding: 12px; max-width: 100%; }
-  h1 { font-size: 24px; line-height: 1.15; margin: 0; }
-  h2, h3 { font-size: 16px; margin: 8px 0; }
-  .grid { grid-template-columns: 1fr; gap: 12px; }
-  .header { flex-direction: column; align-items: stretch; gap: 8px; }
-  .row.gap > * { margin-right: 6px; }
-  .card { padding: 12px; border-radius: 10px; }
-  .card-lite { padding: 8px 10px; }
-  .input, .btn, select.input { width: 100%; max-width: 100%; }
-  .btn { padding: 8px 10px; border-radius: 10px; }
-  .pill { font-size: 11px; }
-
-  /* Week tabs become a horizontal scroller */
-  .weekbar {
-    order: 2;
-    width: 100%;
-    overflow-x: auto;
-    white-space: nowrap;
-    padding-bottom: 4px;
-    -webkit-overflow-scrolling: touch;
+  .toast {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    padding: 10px 14px; border-radius: 10px; color: #111827; background: #fff;
+    border: 1px solid var(--b); box-shadow: 0 8px 30px rgba(0,0,0,.08);
+    animation: fadeout 3s forwards;
   }
-  .weekbar .btn { width: auto; display: inline-block; font-size: 12px; padding: 6px 10px; }
-  .weekbar::-webkit-scrollbar { display: none; }
+  .toast.ok { border-color: #16a34a; }
+  .toast.err { border-color: var(--danger); color: #b91c1c; }
+  @keyframes fadeout { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
 
-  /* Menu tiles: one per row */
-  .cards { grid-template-columns: 1fr; gap: 8px; }
-  .tile { padding: 10px; }
-  .tile-title { font-size: 15px; }
-  .tile-sub, .tile-meta { font-size: 12px; }
+  /* ===== Mobile tweaks ===== */
+  @media (max-width: 768px) {
+    .wrap { padding: 12px; max-width: 100%; }
+    h1 { font-size: 24px; line-height: 1.15; margin: 0; }
+    h2, h3 { font-size: 16px; margin: 8px 0; }
+    .grid { grid-template-columns: 1fr; gap: 12px; }
+    .header { flex-direction: column; align-items: stretch; gap: 8px; }
+    .row.gap > * { margin-right: 6px; }
+    .card { padding: 12px; border-radius: 10px; }
+    .card-lite { padding: 8px 10px; }
+    .input, .btn, select.input { width: 100%; max-width: 100%; }
+    .btn { padding: 8px 10px; border-radius: 10px; }
+    .pill { font-size: 11px; }
 
-  /* Totals list a bit smaller */
-  .list li { font-size: 14px; padding: 6px 8px; }
+    /* Week tabs become a horizontal scroller */
+    .weekbar {
+      width: 100%; overflow-x: auto; white-space: nowrap; padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .weekbar .btn { width: auto; display: inline-block; font-size: 12px; padding: 6px 10px; }
+    .weekbar::-webkit-scrollbar { display: none; }
 
-  /* Hide QR card on phones (can re-enable later) */
-  .card.qr { display: none; }
+    /* Menu tiles: one per row */
+    .cards { grid-template-columns: 1fr; gap: 8px; }
+    .tile { padding: 10px; }
+    .tile-title { font-size: 15px; }
+    .tile-sub, .tile-meta { font-size: 12px; }
 
-  /* Toast spacing */
-  .toast { left: 50%; bottom: 12px; transform: translateX(-50%); padding: 8px 12px; font-size: 14px; }
-}
+    /* Totals list a bit smaller */
+    .list li { font-size: 14px; padding: 6px 8px; }
+
+    /* Hide QR card on phones (remove if you want it visible) */
+    .card.qr { display: none; }
+
+    /* Toast spacing */
+    .toast { left: 50%; bottom: 12px; transform: translateX(-50%); padding: 8px 12px; font-size: 14px; }
+  }
 `;
 document.head.appendChild(style);
