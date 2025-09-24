@@ -20,6 +20,31 @@ const todayKey = () => {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 };
+// === Week helpers (ADD this under your Supabase client code) ===
+function startOfWeek(d) {
+  const x = new Date(d);
+  // Monday as first day of week (Mon=1 ... Sun=7)
+  const day = x.getDay() || 7;
+  if (day !== 1) x.setDate(x.getDate() - (day - 1));
+  x.setHours(0,0,0,0);
+  return x;
+}
+function ymd(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function getThisWeek() {
+  const first = startOfWeek(new Date());
+  return Array.from({ length: 5 }).map((_, i) => {
+    const d = new Date(first);
+    d.setDate(first.getDate() + i); // Mon..Fri
+    const key = ymd(d);
+    const label = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    return { key, label, date: d };
+  });
+}
 
 const LOCATIONS = ["Gagnaver", "Verkstæði"];
 
@@ -147,7 +172,9 @@ export default function App() {
   const [lang, setLang] = useState(() => localStorage.getItem("lang") || "en");
   const t = T[lang];
 
-  const [dateKey, setDateKey] = useState(todayKey());
+  // Make dateKey follow the selected tab
+const [dateKey, setDateKey] = useState(week[activeDay].key);
+useEffect(() => { setDateKey(week[activeDay].key); }, [activeDay, week]);
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -159,6 +186,14 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [menu, setMenu] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [week, setWeek] = useState(getThisWeek());
+  const [activeDay, setActiveDay] = useState(0); // 0=Mon
+
+  // Toast + submit guard (ADD)
+const [toast, setToast] = useState(null); // {type:'ok'|'err', text:string}
+const [submitting, setSubmitting] = useState(false);
+
+
   // Admin editor rows
   const [rows, setRows] = useState([{ name: "", description: "", price: "" }]);
 
@@ -218,22 +253,58 @@ export default function App() {
   }, [deadlineEnabled, deadline]);
 
   // Actions
-  async function signIn() {
-    if (!email) return alert("Enter your work email");
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
-    if (error) alert(error.message); else alert("Check your email for the magic link");
-  }
+ async function signIn() {
+  if (!email) return alert("Enter your work email");
+  const redirectTo = `${window.location.origin}/`; // e.g. https://lunch-app-seven.vercel.app/
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: redirectTo },
+  });
+  if (error) alert(error.message);
+  else alert("Check your email for the magic link");
+}
+
   async function signOut() { await supabase.auth.signOut(); }
 
-  async function submitOrder() {
-    if (!selected) return alert(t.submitOrder + ": select an item");
-    if (deadlinePassed) return alert(t.orderingClosed);
-    const payload = { day: dateKey, item_id: selected, note: note.trim() || null, user_id: null, employee_name: null, location };
-    if (session?.user) payload.user_id = session.user.id; else { if (!name.trim()) return alert(t.yourName); payload.employee_name = name.trim(); }
-    const { error } = await supabase.from("orders").insert(payload);
-    if (error) { alert(error.message); return; }
-    setNote(""); setSelected(null);
+async function submitOrder() {
+  if (!selected) return setToast({ type: "err", text: "Select a lunch item first." });
+  if (deadlinePassed) return setToast({ type: "err", text: t.orderingClosed });
+  if (submitting) return;
+  setSubmitting(true);
+
+  const payload = {
+    day: dateKey,
+    item_id: selected,
+    note: note.trim() || null,
+    user_id: null,
+    employee_name: null,
+    location,
+  };
+  if (session?.user) {
+    payload.user_id = session.user.id;
+  } else {
+    if (!name.trim()) {
+      setSubmitting(false);
+      return setToast({ type: "err", text: t.yourName });
+    }
+    payload.employee_name = name.trim();
   }
+
+  const { error } = await supabase.from("orders").insert(payload);
+  setSubmitting(false);
+
+  if (error) {
+    const msg = error.code === "23505"
+      ? "You already placed an order for this day."
+      : error.message;
+    return setToast({ type: "err", text: msg });
+  }
+
+  setNote("");
+  setSelected(null);
+  setToast({ type: "ok", text: `Order placed for ${week.find(w=>w.key===dateKey)?.label || dateKey}.` });
+}
+
 
   async function deleteOrder(id) { const { error } = await supabase.from("orders").delete().eq("id", id); if (error) alert(error.message); }
 
@@ -300,6 +371,33 @@ function downloadCSV(filename, rows) {
     <div className="wrap">
       <header className="row header">
         <h1>🥗 {t.title} <small>({dateKey})</small></h1>
+        {/* Week tabs (ADD under the title) */}
+<div className="row wrap gap" style={{ marginTop: 6 }}>
+  {week.map((d, i) => (
+    <button
+      key={d.key}
+      className={`btn ${i === activeDay ? "primary" : ""}`}
+      onClick={() => setActiveDay(i)}
+      title={d.key}
+    >
+      {d.label}
+    </button>
+  ))}
+  {/* Optional: next/prev week buttons */}
+  <button className="btn" onClick={() => {
+    const first = new Date(week[0].date);
+    first.setDate(first.getDate() - 7);
+    const w = Array.from({length:5}).map((_,i)=>{ const d=new Date(first); d.setDate(first.getDate()+i); return { key: ymd(d), label: d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}), date:d }; });
+    setWeek(w); setActiveDay(0);
+  }}>⟵</button>
+  <button className="btn" onClick={() => {
+    const first = new Date(week[0].date);
+    first.setDate(first.getDate() + 7);
+    const w = Array.from({length:5}).map((_,i)=>{ const d=new Date(first); d.setDate(first.getDate()+i); return { key: ymd(d), label: d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}), date:d }; });
+    setWeek(w); setActiveDay(0);
+  }}>⟶</button>
+</div>
+       
         <div className="row gap">
           <select className="input" value={lang} onChange={(e)=>setLang(e.target.value)}>
             {LANGS.map((l)=> <option key={l.code} value={l.code}>{l.label}</option>)}
@@ -358,7 +456,15 @@ function downloadCSV(filename, rows) {
           </div>
 
           <input className="input" placeholder={t.notePlaceholder} value={note} onChange={(e)=>setNote(e.target.value)} />
-          <div className="row"><button className="btn primary" onClick={submitOrder} disabled={deadlineEnabled && deadlinePassed}>{t.submitOrder}</button></div>
+          <div className="row"><button className="btn primary" onClick={submitOrder} disabled={deadlineEnabled && deadlinePassed}>{t.submitOrder}</button>
+          {/* Toast (ADD near the bottom of the return) */}
+{toast && (
+  <div className={`toast ${toast.type === "ok" ? "ok" : "err"}`}
+       onAnimationEnd={() => setToast(null)}>
+    {toast.text}
+  </div>
+)}
+</div>
         </section>
 
         <aside className="col">
@@ -493,5 +599,15 @@ style.innerHTML = `
   .table { display:block; }
   .thead { display:grid; grid-template-columns: 1fr 2fr 120px 60px; gap:8px; font-weight:600; margin-bottom:6px; }
   .trow { display:grid; grid-template-columns: 1fr 2fr 120px 60px; gap:8px; margin-bottom:6px; align-items:center; }
+  /* Toast */
+.toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  padding: 10px 14px; border-radius: 10px; color: #111827; background: #fff;
+  border: 1px solid var(--b); box-shadow: 0 8px 30px rgba(0,0,0,.08);
+  animation: fadeout 3s forwards;
+}
+.toast.ok { border-color: #16a34a; }
+.toast.err { border-color: var(--danger); color: #b91c1c; }
+@keyframes fadeout { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
 `;
 document.head.appendChild(style);
