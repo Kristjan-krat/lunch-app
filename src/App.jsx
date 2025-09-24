@@ -623,5 +623,46 @@ style.innerHTML = `
 .toast.ok { border-color: #16a34a; }
 .toast.err { border-color: var(--danger); color: #b91c1c; }
 @keyframes fadeout { 0%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+/* ===== Mobile tweaks ===== */
+@media (max-width: 768px) {
+  .wrap { padding: 12px; max-width: 100%; }
+  h1 { font-size: 24px; line-height: 1.15; margin: 0; }
+  h2, h3 { font-size: 16px; margin: 8px 0; }
+  .grid { grid-template-columns: 1fr; gap: 12px; }
+  .header { flex-direction: column; align-items: stretch; gap: 8px; }
+  .row.gap > * { margin-right: 6px; }
+  .card { padding: 12px; border-radius: 10px; }
+  .card-lite { padding: 8px 10px; }
+  .input, .btn, select.input { width: 100%; max-width: 100%; }
+  .btn { padding: 8px 10px; border-radius: 10px; }
+  .pill { font-size: 11px; }
+
+  /* Week tabs become a horizontal scroller */
+  .weekbar {
+    order: 2;
+    width: 100%;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .weekbar .btn { width: auto; display: inline-block; font-size: 12px; padding: 6px 10px; }
+  .weekbar::-webkit-scrollbar { display: none; }
+
+  /* Menu tiles: one per row */
+  .cards { grid-template-columns: 1fr; gap: 8px; }
+  .tile { padding: 10px; }
+  .tile-title { font-size: 15px; }
+  .tile-sub, .tile-meta { font-size: 12px; }
+
+  /* Totals list a bit smaller */
+  .list li { font-size: 14px; padding: 6px 8px; }
+
+  /* Hide QR card on phones (can re-enable later) */
+  .card.qr { display: none; }
+
+  /* Toast spacing */
+  .toast { left: 50%; bottom: 12px; transform: translateX(-50%); padding: 8px 12px; font-size: 14px; }
+}
 `;
 document.head.appendChild(style);
