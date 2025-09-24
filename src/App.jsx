@@ -169,35 +169,36 @@ const T = {
 
 export default function App() {
   // --- State ---
-// language first (ok wherever)
-const [lang, setLang] = useState(() => localStorage.getItem("lang") || "en");
-const t = T[lang];
+  // language first (ok wherever)
+  const [lang, setLang] = useState(() => localStorage.getItem("lang") || "en");
+  const t = T[lang];
 
-// WEEK STATE — must come before dateKey
-const [week, setWeek] = useState(getThisWeek());
-const [activeDay, setActiveDay] = useState(0); // 0 = Monday
+  // WEEK STATE — must come before dateKey
+  const [week, setWeek] = useState(getThisWeek());
+  const [activeDay, setActiveDay] = useState(0); // 0 = Monday
 
-// DATE KEY that depends on week/activeDay
-const [dateKey, setDateKey] = useState(week[activeDay].key);
-useEffect(() => {
-  setDateKey(week[activeDay].key);
-}, [activeDay, week]);
+  // DATE KEY that depends on week/activeDay
+  const [dateKey, setDateKey] = useState(week[activeDay].key);
+  useEffect(() => {
+    setDateKey(week[activeDay].key);
+  }, [activeDay, week]);
 
-// the rest of your states...
-const [session, setSession] = useState(null);
-const [email, setEmail] = useState("");
-const [name, setName] = useState("");
-const [note, setNote] = useState("");
-const [selected, setSelected] = useState(null);
-const [location, setLocation] = useState(LOCATIONS[0]);
-const [deadlineEnabled, setDeadlineEnabled] = useState(false);
-const [deadline, setDeadline] = useState("12:00");
-const [isAdmin, setIsAdmin] = useState(false);
-const [menu, setMenu] = useState([]);
-const [orders, setOrders] = useState([]);
-const [rows, setRows] = useState([{ name: "", description: "", price: "" }]);
-const [toast, setToast] = useState(null);
-const [submitting, setSubmitting] = useState(false);
+  // the rest of your states...
+  const [session, setSession] = useState(null);
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [note, setNote] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [location, setLocation] = useState(LOCATIONS[0]);
+  const [deadlineEnabled, setDeadlineEnabled] = useState(false);
+  const [deadline, setDeadline] = useState("12:00");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [menu, setMenu] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [rows, setRows] = useState([{ name: "", description: "", price: "" }]);
+  const [toast, setToast] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
 
 
 
@@ -461,7 +462,15 @@ function downloadCSV(filename, rows) {
           </div>
 
           <input className="input" placeholder={t.notePlaceholder} value={note} onChange={(e)=>setNote(e.target.value)} />
-          <div className="row"><button className="btn primary" onClick={submitOrder} disabled={deadlineEnabled && deadlinePassed}>{t.submitOrder}</button>
+            <div className="row">
+            <button
+              className="btn primary"
+              onClick={submitOrder}
+              disabled={submitting || (deadlineEnabled && deadlinePassed)}
+            >
+              {submitting ? "Submitting..." : t.submitOrder}
+            </button>
+
           {/* Toast (ADD near the bottom of the return) */}
 {toast && (
   <div className={`toast ${toast.type === "ok" ? "ok" : "err"}`}
