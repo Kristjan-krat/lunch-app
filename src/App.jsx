@@ -197,7 +197,11 @@ export default function App() {
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [selected, setSelected] = useState(null);
-  const [location, setLocation] = useState(LOCATIONS[0]);
+  const [location, setLocation] = useState(
+    localStorage.getItem("loc") || LOCATIONS[0]
+  );
+  useEffect(() => localStorage.setItem("loc", location), [location]);
+
   const [deadlineEnabled, setDeadlineEnabled] = useState(false);
   const [deadline, setDeadline] = useState("12:00");
   const [isAdmin, setIsAdmin] = useState(false);
@@ -206,6 +210,7 @@ export default function App() {
   const [rows, setRows] = useState([{ name: "", description: "", price: "" }]);
   const [toast, setToast] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   /* ------------------ Auth ------------------ */
   useEffect(() => {
@@ -233,6 +238,7 @@ export default function App() {
 
   /* ------------------ Data load ------------------ */
   async function loadData(dk) {
+    setLoading(true);
     const { data: menuItems } = await supabase
       .from("menu_items")
       .select("id, day, name, description, price")
@@ -248,6 +254,7 @@ export default function App() {
       .eq("day", dk)
       .order("created_at");
     setOrders(orderRows || []);
+    setLoading(false);
   }
   useEffect(() => {
     loadData(dateKey);
@@ -294,7 +301,13 @@ export default function App() {
     return now.getTime() > d.getTime();
   }, [deadlineEnabled, deadline]);
 
-  /* ------------------ Week helpers for UI ------------------ */
+  const isPast = (d) => {
+    const today = new Date(new Date().toDateString());
+    const dt = new Date(d.key + "T00:00:00");
+    return dt < today;
+  };
+
+  /* ------------------ Week helpers ------------------ */
   function setWeekFrom(first) {
     const w = Array.from({ length: 5 }).map((_, i) => {
       const d = new Date(first);
@@ -339,6 +352,8 @@ export default function App() {
   }
 
   async function submitOrder() {
+    if (menu.length === 0)
+      return setToast({ type: "err", text: "No menu for this day yet." });
     if (!selected)
       return setToast({ type: "err", text: "Select a lunch item first." });
     if (deadlinePassed)
@@ -395,7 +410,9 @@ export default function App() {
     setRows((r) => [...r, { name: "", description: "", price: "" }]);
   }
   function updateRow(i, key, val) {
-    setRows((r) => r.map((row, idx) => (idx === i ? { ...row, [key]: val } : row)));
+    setRows((r) =>
+      r.map((row, idx) => (idx === i ? { ...row, [key]: val } : row))
+    );
   }
   function removeRow(i) {
     setRows((r) => r.filter((_, idx) => idx !== i));
@@ -428,6 +445,26 @@ export default function App() {
     await supabase.from("menu_items").delete().eq("day", dateKey);
     await loadData(dateKey);
     setToast({ type: "ok", text: "Cleared" });
+  }
+
+  async function copyYesterday() {
+    const d = new Date(dateKey);
+    d.setDate(d.getDate() - 1);
+    const prev = ymd(d);
+    const { data, error } = await supabase
+      .from("menu_items")
+      .select("name,description,price")
+      .eq("day", prev);
+    if (error) return setToast({ type: "err", text: error.message });
+    if (!data?.length)
+      return setToast({ type: "err", text: "No menu yesterday" });
+    setRows(
+      data.map((x) => ({
+        name: x.name || "",
+        description: x.description || "",
+        price: x.price || "",
+      }))
+    );
   }
 
   function exportOrdersCSV() {
@@ -474,8 +511,10 @@ export default function App() {
   return (
     <div className="wrap">
       <header className="row header">
-        <div className="row" style={{ alignItems: "center", gap: 12 }}>
-          <img src="/logo.svg" alt="Company logo" style={{ width: 36, height: 36 }} />
+        <div className="row" style={{ alignItems: "center", gap: 14 }}>
+          {/* Bigger logo */}
+          <img src="/logo.svg" alt="Company logo" style={{ width: 56, height: 56 }} />
+          {/* Smaller title */}
           <h1>
             🥗 {t.title} <small>({dateKey})</small>
           </h1>
@@ -572,7 +611,9 @@ export default function App() {
 
           <div className="menu-grid">
             <div className="label">{t.todaysMenu}</div>
-            {menu.length === 0 ? (
+            {loading ? (
+              <div className="muted">Loading…</div>
+            ) : menu.length === 0 ? (
               <div className="muted">{t.noItems}</div>
             ) : (
               <div className="cards">
@@ -623,18 +664,15 @@ export default function App() {
               <button
                 key={d.key}
                 className={`btn ${i === activeDay ? "primary" : ""}`}
-                onClick={() => setActiveDay(i)}
+                onClick={() => !isPast(d) && setActiveDay(i)}
+                disabled={isPast(d)}
                 title={d.key}
               >
                 {d.label}
               </button>
             ))}
-            <button className="btn" onClick={prevWeek}>
-              ⟵
-            </button>
-            <button className="btn" onClick={nextWeek}>
-              ⟶
-            </button>
+            <button className="btn" onClick={prevWeek}>⟵</button>
+            <button className="btn" onClick={nextWeek}>⟶</button>
           </div>
         </section>
 
@@ -645,14 +683,16 @@ export default function App() {
               <h3>
                 {t.totals} — {loc}
               </h3>
-              {menu.length === 0 ? (
+              {loading ? (
+                <div className="muted">Loading…</div>
+              ) : menu.length === 0 ? (
                 <div className="muted">{t.noItems}</div>
               ) : (
                 <ul className="list">
                   {menu.map((m) => (
                     <li key={m.id}>
                       <span>{m.name}</span>
-                      <b>
+                      <b className={`qty ${(totalsByLocation.get(loc)?.get(m.id) || 0) > 0 ? "pos" : ""}`}>
                         {(totalsByLocation.get(loc) || new Map()).get(m.id) || 0}
                       </b>
                     </li>
@@ -726,9 +766,8 @@ export default function App() {
                   </div>
                 ))}
                 <div className="row gap" style={{ marginTop: 8 }}>
-                  <button className="btn" onClick={addRow}>
-                    + Add row
-                  </button>
+                  <button className="btn" onClick={addRow}>+ Add row</button>
+                  <button className="btn" onClick={copyYesterday}>Copy yesterday</button>
                   <button className="btn primary" onClick={publishMenu}>
                     {t.publishMenu}
                   </button>
@@ -801,7 +840,7 @@ const style = document.createElement("style");
 style.innerHTML = `
   :root { --b:#e5e7eb; --m:#6b7280; --bg:#f8fafc; --pri:#2563eb; --pri-100:#eff6ff; --danger:#b91c1c; }
   body { background: var(--bg); margin:0; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; font-family: system-ui, sans-serif; color:#111827; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; font-family: system-ui, sans-serif; color:#111827; }
   .row { display:flex; align-items:center; }
   .row.space { justify-content: space-between; }
   .row.gap > * { margin-right: 8px; }
@@ -818,6 +857,7 @@ style.innerHTML = `
   .btn.primary { background: var(--pri-100); border-color: var(--pri); }
   .btn.primary:hover { background:#dbeafe; }
   .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
   .pill { background:#f3f4f6; padding:4px 8px; border-radius:999px; font-size:12px; }
   .pill.soft { background:#eef2ff; }
   .muted { color: var(--m); }
@@ -833,7 +873,13 @@ style.innerHTML = `
   .tile-sub { font-size:12px; color:var(--m); margin-top:4px; }
   .tile-meta { font-size:12px; color:var(--m); margin-top:6px; }
   .list { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
-  .list li { display:flex; justify-content: space-between; padding:6px 8px; border:1px solid var(--b); border-radius:8px; background:#fff; }
+  .list li { display:flex; justify-content: space-between; align-items:center; padding:6px 8px; border:1px solid var(--b); border-radius:8px; background:#fff; }
+  .list li .qty { min-width:26px; text-align:right; border-radius:8px; padding:2px 8px; background:#f3f4f6; }
+  .list li .qty.pos { background:#dcfce7; }
+
+  /* Title sizing tweaks */
+  h1{ font-size: 28px; line-height: 1.2; margin:0; }
+  @media (min-width: 1024px){ h1{ font-size: 26px; } } /* slightly smaller on desktop */
 
   /* Toast */
   .toast {
@@ -849,7 +895,7 @@ style.innerHTML = `
   /* ===== Mobile tweaks ===== */
   @media (max-width: 768px) {
     .wrap { padding: 12px; max-width: 100%; }
-    h1 { font-size: 24px; line-height: 1.15; margin: 0; }
+    h1 { font-size: 22px; line-height: 1.15; margin: 0; }
     h2, h3 { font-size: 16px; margin: 8px 0; }
     .grid { grid-template-columns: 1fr; gap: 12px; }
     .header { flex-direction: column; align-items: stretch; gap: 8px; }
